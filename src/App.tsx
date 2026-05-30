@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { Search, Settings, ShieldCheck, Sparkles, Target, X } from 'lucide-react'
 import {
   DEFAULT_CREDENTIALS,
+  DEFAULT_CUSTOM_CONFIG,
   loadCredentials,
   saveCredentials,
+  type BuiltInModel,
   type Credentials,
+  type CustomConfig,
   type ModelProvider,
 } from './lib/credentials'
 import { fetchPRContext } from './services/github'
@@ -16,10 +19,11 @@ const MODEL_OPTIONS: { value: ModelProvider; label: string }[] = [
   { value: 'deepseek', label: 'DeepSeek Coder' },
   { value: 'kimi', label: 'Kimi 月之暗面' },
   { value: 'qwen', label: '通义千问 Qwen' },
+  { value: 'custom', label: '⚙️ 自定义网关 (Custom API)' },
 ]
 
 const MODEL_KEY_FIELDS: {
-  key: ModelProvider
+  key: BuiltInModel
   label: string
   applyUrl: string
   applyLabel: string
@@ -51,6 +55,7 @@ function App() {
   const [credentials, setCredentials] = useState<Credentials>(DEFAULT_CREDENTIALS)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [draftKeys, setDraftKeys] = useState(DEFAULT_CREDENTIALS.keys)
+  const [draftCustomConfig, setDraftCustomConfig] = useState<CustomConfig>(DEFAULT_CUSTOM_CONFIG)
 
   useEffect(() => {
     setCredentials(loadCredentials())
@@ -59,8 +64,9 @@ function App() {
   useEffect(() => {
     if (isSettingsOpen) {
       setDraftKeys(credentials.keys)
+      setDraftCustomConfig(credentials.customConfig)
     }
-  }, [isSettingsOpen, credentials.keys])
+  }, [isSettingsOpen, credentials.keys, credentials.customConfig])
 
   const handleActiveModelChange = (activeModel: ModelProvider) => {
     const updated = { ...credentials, activeModel }
@@ -69,7 +75,11 @@ function App() {
   }
 
   const handleSaveCredentials = () => {
-    const updated = { ...credentials, keys: draftKeys }
+    const updated = {
+      ...credentials,
+      keys: draftKeys,
+      customConfig: draftCustomConfig,
+    }
     setCredentials(updated)
     saveCredentials(updated)
     setIsSettingsOpen(false)
@@ -94,7 +104,12 @@ function App() {
         reviewMode: reviewMode === 'enterprise' ? 'A' : 'B',
         customPrompt: personalizedContext,
       }
-      const result = await analyzePR(contextData, apiKey, credentials.activeModel)
+      const result = await analyzePR(
+        contextData,
+        apiKey,
+        credentials.activeModel,
+        credentials.customConfig,
+      )
       console.log('🏆 AI 审查结果出炉:', result)
     } catch (error) {
       console.error(error)
@@ -311,6 +326,59 @@ function App() {
                   />
                 </div>
               ))}
+            </div>
+
+            <div className="my-5 border-t border-slate-200/80" />
+
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-slate-700">
+                自定义 API (兼容 OpenAI 格式)
+              </p>
+              <div>
+                <label htmlFor="custom-base-url" className="mb-1.5 block text-xs text-slate-500">
+                  Base URL
+                </label>
+                <input
+                  id="custom-base-url"
+                  type="url"
+                  value={draftCustomConfig.baseURL}
+                  onChange={(e) =>
+                    setDraftCustomConfig((prev) => ({ ...prev, baseURL: e.target.value }))
+                  }
+                  placeholder="https://api.openai.com/v1/chat/completions"
+                  className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
+                />
+              </div>
+              <div>
+                <label htmlFor="custom-model-name" className="mb-1.5 block text-xs text-slate-500">
+                  Model Name
+                </label>
+                <input
+                  id="custom-model-name"
+                  type="text"
+                  value={draftCustomConfig.modelName}
+                  onChange={(e) =>
+                    setDraftCustomConfig((prev) => ({ ...prev, modelName: e.target.value }))
+                  }
+                  placeholder="例如: gpt-4, claude-3-haiku"
+                  className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
+                />
+              </div>
+              <div>
+                <label htmlFor="key-custom" className="mb-1.5 block text-xs text-slate-500">
+                  API Key
+                </label>
+                <input
+                  id="key-custom"
+                  type="password"
+                  value={draftKeys.custom}
+                  onChange={(e) =>
+                    setDraftKeys((prev) => ({ ...prev, custom: e.target.value }))
+                  }
+                  placeholder="sk-xxxxxxxxxxxx"
+                  className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
+                />
+              </div>
             </div>
 
             <button
