@@ -14,8 +14,14 @@ import {
 } from './lib/credentials'
 import { fetchPRContext } from './services/github'
 import { analyzePR } from './services/llm'
+import ReviewResult from './components/ReviewResult'
 
 type ReviewMode = 'enterprise' | 'agile'
+
+interface ReviewResultState {
+  score: number
+  report: string
+}
 
 const BUILTIN_MODEL_LABELS: Record<BuiltInModel, string> = {
   deepseek: 'DeepSeek Coder',
@@ -60,6 +66,8 @@ function App() {
   const [isCustomModalOpen, setIsCustomModalOpen] = useState(false)
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null)
   const [customForm, setCustomForm] = useState(createEmptyCustomConfigForm())
+  const [isReviewing, setIsReviewing] = useState(false)
+  const [reviewResult, setReviewResult] = useState<ReviewResultState | null>(null)
 
   useEffect(() => {
     setCredentials(loadCredentials())
@@ -197,6 +205,9 @@ function App() {
       return
     }
 
+    setIsReviewing(true)
+    setReviewResult(null)
+
     try {
       const githubData = await fetchPRContext(prUrl)
       const contextData = {
@@ -210,10 +221,16 @@ function App() {
         resolved.selectedModel,
         resolved.endpoint,
       )
+      setReviewResult({
+        score: result.healthScore,
+        report: result.markdownReport,
+      })
       console.log('🏆 AI 审查结果出炉:', result)
     } catch (error) {
       console.error(error)
       alert(error instanceof Error ? error.message : '审查过程中发生未知错误')
+    } finally {
+      setIsReviewing(false)
     }
   }
 
@@ -263,9 +280,12 @@ function App() {
               <button
                 type="button"
                 onClick={handleStartReview}
-                className="shrink-0 rounded-xl bg-slate-900 px-8 py-3.5 text-base font-medium text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.98] sm:px-10"
+                disabled={isReviewing}
+                className={`shrink-0 rounded-xl bg-slate-900 px-8 py-3.5 text-base font-medium text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.98] sm:px-10 ${
+                  isReviewing ? 'cursor-not-allowed opacity-50 animate-pulse' : ''
+                }`}
               >
-                开始审查
+                {isReviewing ? '正在深度审查中...' : '开始审查'}
               </button>
             </div>
 
@@ -364,11 +384,33 @@ function App() {
         </section>
 
         <section className="flex flex-1 flex-col">
-          <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-2xl border border-white/20 bg-white/60 p-10 shadow-sm backdrop-blur-md sm:min-h-[320px] sm:p-12">
-            <p className="text-center text-base font-normal text-slate-400 sm:text-lg">
-              审查报告将在此处生成...
-            </p>
-          </div>
+          {isReviewing && (
+            <div className="mt-8 rounded-2xl border border-white/20 bg-white/60 p-8 shadow-sm backdrop-blur-md">
+              <div className="flex items-center gap-5">
+                <div className="h-16 w-16 shrink-0 rounded-full bg-slate-200 animate-pulse" />
+                <div className="flex-1 space-y-3">
+                  <div className="h-3 w-full rounded bg-slate-200 animate-pulse" />
+                  <div className="h-3 w-4/5 rounded bg-slate-200 animate-pulse" />
+                  <div className="h-3 w-3/5 rounded bg-slate-200 animate-pulse" />
+                </div>
+              </div>
+              <p className="mt-6 text-center text-sm text-slate-400 animate-pulse">
+                AI 正在逐行扫描代码变更...
+              </p>
+            </div>
+          )}
+
+          {!isReviewing && reviewResult && (
+            <ReviewResult score={reviewResult.score} report={reviewResult.report} />
+          )}
+
+          {!isReviewing && !reviewResult && (
+            <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-2xl border border-white/20 bg-white/60 p-10 shadow-sm backdrop-blur-md sm:min-h-[320px] sm:p-12">
+              <p className="text-center text-base font-normal text-slate-400 sm:text-lg">
+                审查报告将在此处生成...
+              </p>
+            </div>
+          )}
         </section>
       </main>
 
