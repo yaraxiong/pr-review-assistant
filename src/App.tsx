@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Search, Sparkles, Target } from 'lucide-react'
+import { fetchPRContext } from './services/github'
 
 type ReviewMode = 'enterprise' | 'agile'
 
@@ -7,6 +8,15 @@ function App() {
   const [prUrl, setPrUrl] = useState('')
   const [reviewMode, setReviewMode] = useState<ReviewMode>('agile')
   const [personalizedContext, setPersonalizedContext] = useState('')
+
+  const handleStartReview = async () => {
+    try {
+      const data = await fetchPRContext(prUrl)
+      console.log('获取到的三层上下文数据:', data)
+    } catch (error) {
+      console.error(error)
+    }
+  }
 
   return (
     <div className="min-h-svh bg-gradient-to-br from-slate-50 to-gray-100 font-sans antialiased">
@@ -45,6 +55,7 @@ function App() {
               </div>
               <button
                 type="button"
+                onClick={handleStartReview}
                 className="shrink-0 rounded-xl bg-slate-900 px-8 py-3.5 text-base font-medium text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.98] sm:px-10"
               >
                 开始审查
