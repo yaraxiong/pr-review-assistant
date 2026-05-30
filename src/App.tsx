@@ -1,20 +1,104 @@
-import { useState } from 'react'
-import { Search, Sparkles, Target } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Search, Settings, ShieldCheck, Sparkles, Target, X } from 'lucide-react'
+import {
+  DEFAULT_CREDENTIALS,
+  loadCredentials,
+  saveCredentials,
+  type Credentials,
+  type ModelProvider,
+} from './lib/credentials'
 import { fetchPRContext } from './services/github'
+import { analyzePR } from './services/llm'
 
 type ReviewMode = 'enterprise' | 'agile'
+
+const MODEL_OPTIONS: { value: ModelProvider; label: string }[] = [
+  { value: 'deepseek', label: 'DeepSeek Coder' },
+  { value: 'kimi', label: 'Kimi 月之暗面' },
+  { value: 'qwen', label: '通义千问 Qwen' },
+]
+
+const MODEL_KEY_FIELDS: {
+  key: ModelProvider
+  label: string
+  applyUrl: string
+  applyLabel: string
+}[] = [
+  {
+    key: 'deepseek',
+    label: 'DeepSeek Coder',
+    applyUrl: 'https://platform.deepseek.com/',
+    applyLabel: '免费申请 ↗',
+  },
+  {
+    key: 'kimi',
+    label: 'Kimi 月之暗面',
+    applyUrl: 'https://platform.moonshot.cn/',
+    applyLabel: '申请 Key ↗',
+  },
+  {
+    key: 'qwen',
+    label: '通义千问 Qwen',
+    applyUrl: 'https://dashscope.console.aliyun.com/',
+    applyLabel: '申请 Key ↗',
+  },
+]
 
 function App() {
   const [prUrl, setPrUrl] = useState('')
   const [reviewMode, setReviewMode] = useState<ReviewMode>('agile')
   const [personalizedContext, setPersonalizedContext] = useState('')
+  const [credentials, setCredentials] = useState<Credentials>(DEFAULT_CREDENTIALS)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [draftKeys, setDraftKeys] = useState(DEFAULT_CREDENTIALS.keys)
+
+  useEffect(() => {
+    setCredentials(loadCredentials())
+  }, [])
+
+  useEffect(() => {
+    if (isSettingsOpen) {
+      setDraftKeys(credentials.keys)
+    }
+  }, [isSettingsOpen, credentials.keys])
+
+  const handleActiveModelChange = (activeModel: ModelProvider) => {
+    const updated = { ...credentials, activeModel }
+    setCredentials(updated)
+    saveCredentials(updated)
+  }
+
+  const handleSaveCredentials = () => {
+    const updated = { ...credentials, keys: draftKeys }
+    setCredentials(updated)
+    saveCredentials(updated)
+    setIsSettingsOpen(false)
+  }
 
   const handleStartReview = async () => {
+    if (!prUrl.trim()) {
+      alert('请先输入 GitHub PR 链接')
+      return
+    }
+
+    const apiKey = credentials.keys[credentials.activeModel]?.trim()
+    if (!apiKey) {
+      alert('请先点击右上角设置图标，配置当前模型的 API Key')
+      return
+    }
+
     try {
-      const data = await fetchPRContext(prUrl)
-      console.log('获取到的三层上下文数据:', data)
+      const githubData = await fetchPRContext(prUrl)
+      const contextData = {
+        ...githubData,
+        reviewMode: reviewMode === 'enterprise' ? 'A' : 'B',
+        customPrompt: personalizedContext,
+      }
+      const result = await analyzePR(contextData, apiKey, credentials.activeModel)
+      console.log('🏆 AI 审查结果出炉:', result)
     } catch (error) {
       console.error(error)
+      alert(error instanceof Error ? error.message : '审查过程中发生未知错误')
     }
   }
 
@@ -22,7 +106,16 @@ function App() {
     <div className="min-h-svh bg-gradient-to-br from-slate-50 to-gray-100 font-sans antialiased">
       <main className="mx-auto flex min-h-svh w-full max-w-5xl flex-col px-6 py-16 sm:px-8 sm:py-20 lg:py-24">
         {/* Header */}
-        <header className="mb-16 text-center sm:mb-20 lg:mb-24">
+        <header className="relative mb-16 text-center sm:mb-20 lg:mb-24">
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            aria-label="打开 API 凭证与模型设置"
+            className="absolute right-0 top-0 rounded-lg p-2 text-slate-400 transition hover:bg-white/40 hover:text-slate-600"
+          >
+            <Settings size={18} strokeWidth={1.75} />
+          </button>
+
           <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/40 px-3 py-1 text-xs font-medium tracking-wide text-slate-500 backdrop-blur-sm">
             <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
             AI-Powered Review
@@ -64,9 +157,22 @@ function App() {
 
             {/* Review Context Configuration */}
             <div className="mt-3 rounded-xl border border-white/20 bg-white/40 p-4 backdrop-blur-sm sm:mt-4 sm:p-5">
-              <p className="mb-4 text-xs font-medium tracking-wide text-slate-400 uppercase">
-                审查上下文配置
-              </p>
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-medium tracking-wide text-slate-400 uppercase">
+                  审查上下文配置
+                </p>
+                <select
+                  value={credentials.activeModel}
+                  onChange={(e) => handleActiveModelChange(e.target.value as ModelProvider)}
+                  className="rounded-lg border border-white/30 bg-white/50 px-3 py-1.5 text-sm text-slate-600 outline-none transition focus:border-slate-300/60 focus:ring-1 focus:ring-slate-900/5"
+                >
+                  {MODEL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               {/* Review Mode Toggle */}
               <fieldset className="mb-5 border-0 p-0">
@@ -150,6 +256,73 @@ function App() {
           </div>
         </section>
       </main>
+
+      {/* BYOK Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="relative mx-4 w-full max-w-[480px] rounded-2xl border border-white/20 bg-white/95 p-6 shadow-2xl backdrop-blur-xl transition-all duration-200">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-800">API 凭证与模型偏好</h2>
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(false)}
+                aria-label="关闭设置"
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X size={16} strokeWidth={2} />
+              </button>
+            </div>
+
+            <div className="mb-6 flex items-start gap-2.5 rounded-lg bg-slate-100/80 px-3.5 py-3">
+              <ShieldCheck size={14} className="mt-0.5 shrink-0 text-slate-500" strokeWidth={2} />
+              <p className="text-xs leading-relaxed text-slate-500">
+                🔑 所有凭证仅加密保存在当前浏览器本地缓存中，绝不会上传至任何第三方服务器。
+              </p>
+            </div>
+
+            <div className="space-y-5">
+              {MODEL_KEY_FIELDS.map((field) => (
+                <div key={field.key}>
+                  <div className="mb-2 flex items-center justify-between">
+                    <label
+                      htmlFor={`key-${field.key}`}
+                      className="text-sm font-medium text-slate-700"
+                    >
+                      {field.label}
+                    </label>
+                    <a
+                      href={field.applyUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-500 hover:underline"
+                    >
+                      {field.applyLabel}
+                    </a>
+                  </div>
+                  <input
+                    id={`key-${field.key}`}
+                    type="password"
+                    value={draftKeys[field.key]}
+                    onChange={(e) =>
+                      setDraftKeys((prev) => ({ ...prev, [field.key]: e.target.value }))
+                    }
+                    placeholder="sk-xxxxxxxxxxxx"
+                    className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2.5 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSaveCredentials}
+              className="mt-6 w-full rounded-xl bg-slate-900 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.99]"
+            >
+              保存并应用
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
