@@ -1,8 +1,11 @@
-import type { ModelProvider } from '../lib/credentials'
-
 export interface AnalysisResult {
   healthScore: number
   markdownReport: string
+}
+
+export interface CustomConfig {
+  baseURL: string
+  modelName: string
 }
 
 const CONTEXT_INJECTION_PROMPT = `你是一个高级代码审查 AI。纯静态扫描工具误报率高的根源在于"缺乏上下文"。系统通过以下"三层上下文注入"机制解决这一痛点，你必须以此作为最高审查准则：
@@ -20,7 +23,10 @@ const AGILE_MODE_PROMPT = `【当前场景：敏捷团队/开源社区/小型项
 
 const OUTPUT_FORMAT_PROMPT = `禁止输出任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。你必须且只能返回一个极其纯净的合法 JSON 字符串。格式严格为：{ "healthScore": 数字(0-100), "markdownReport": "详细的 Markdown 格式评审文本" }`
 
-const MODEL_CONFIG: Record<ModelProvider, { baseURL: string; modelName: string }> = {
+const BUILTIN_MODEL_CONFIG: Record<
+  'deepseek' | 'kimi' | 'qwen',
+  { baseURL: string; modelName: string }
+> = {
   deepseek: {
     baseURL: 'https://api.deepseek.com/chat/completions',
     modelName: 'deepseek-chat',
@@ -61,16 +67,36 @@ function parseAnalysisResult(content: string): AnalysisResult {
   return parsed
 }
 
+function resolveModelConfig(
+  selectedModel: string,
+  customConfig?: CustomConfig,
+): { baseURL: string; modelName: string } {
+  if (selectedModel === 'custom') {
+    if (!customConfig?.baseURL?.trim() || !customConfig?.modelName?.trim()) {
+      throw new Error('自定义网关配置不完整，请填写 Base URL 和 Model Name')
+    }
+    return {
+      baseURL: customConfig.baseURL.trim(),
+      modelName: customConfig.modelName.trim(),
+    }
+  }
+
+  const config = BUILTIN_MODEL_CONFIG[selectedModel as keyof typeof BUILTIN_MODEL_CONFIG]
+  if (!config) {
+    throw new Error(`不支持的模型: ${selectedModel}`)
+  }
+
+  return config
+}
+
 export const analyzePR = async (
   contextData: Record<string, unknown>,
   apiKey: string,
-  selectedModel: ModelProvider,
+  selectedModel: string,
+  customConfig?: CustomConfig,
 ): Promise<AnalysisResult> => {
   try {
-    const config = MODEL_CONFIG[selectedModel]
-    if (!config) {
-      throw new Error(`不支持的模型: ${selectedModel}`)
-    }
+    const config = resolveModelConfig(selectedModel, customConfig)
 
     const reviewMode = String(contextData.reviewMode ?? 'B')
     const systemPrompt = buildSystemPrompt(reviewMode)
