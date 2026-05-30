@@ -1,26 +1,27 @@
 import { useEffect, useState } from 'react'
-import { Search, Settings, ShieldCheck, Sparkles, Target, X } from 'lucide-react'
+import { Pencil, Plus, Search, Settings, ShieldCheck, Sparkles, Target, Trash2, X } from 'lucide-react'
 import {
+  BUILTIN_MODELS,
+  createEmptyCustomConfigForm,
   DEFAULT_CREDENTIALS,
-  DEFAULT_CUSTOM_CONFIG,
+  generateCustomConfigId,
   loadCredentials,
+  resolveActiveModelCredentials,
   saveCredentials,
   type BuiltInModel,
-  type Credentials,
+  type CredentialsStorage,
   type CustomConfig,
-  type ModelProvider,
 } from './lib/credentials'
 import { fetchPRContext } from './services/github'
 import { analyzePR } from './services/llm'
 
 type ReviewMode = 'enterprise' | 'agile'
 
-const MODEL_OPTIONS: { value: ModelProvider; label: string }[] = [
-  { value: 'deepseek', label: 'DeepSeek Coder' },
-  { value: 'kimi', label: 'Kimi 月之暗面' },
-  { value: 'qwen', label: '通义千问 Qwen' },
-  { value: 'custom', label: '⚙️ 自定义网关 (Custom API)' },
-]
+const BUILTIN_MODEL_LABELS: Record<BuiltInModel, string> = {
+  deepseek: 'DeepSeek Coder',
+  kimi: 'Kimi 月之暗面',
+  qwen: '通义千问 Qwen',
+}
 
 const MODEL_KEY_FIELDS: {
   key: BuiltInModel
@@ -52,10 +53,13 @@ function App() {
   const [prUrl, setPrUrl] = useState('')
   const [reviewMode, setReviewMode] = useState<ReviewMode>('agile')
   const [personalizedContext, setPersonalizedContext] = useState('')
-  const [credentials, setCredentials] = useState<Credentials>(DEFAULT_CREDENTIALS)
+  const [credentials, setCredentials] = useState<CredentialsStorage>(DEFAULT_CREDENTIALS)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [draftKeys, setDraftKeys] = useState(DEFAULT_CREDENTIALS.keys)
-  const [draftCustomConfig, setDraftCustomConfig] = useState<CustomConfig>(DEFAULT_CUSTOM_CONFIG)
+  const [draftFixedKeys, setDraftFixedKeys] = useState(DEFAULT_CREDENTIALS.fixedKeys)
+  const [draftCustomConfigs, setDraftCustomConfigs] = useState<CustomConfig[]>([])
+  const [isCustomModalOpen, setIsCustomModalOpen] = useState(false)
+  const [editingCustomId, setEditingCustomId] = useState<string | null>(null)
+  const [customForm, setCustomForm] = useState(createEmptyCustomConfigForm())
 
   useEffect(() => {
     setCredentials(loadCredentials())
@@ -63,26 +67,122 @@ function App() {
 
   useEffect(() => {
     if (isSettingsOpen) {
-      setDraftKeys(credentials.keys)
-      setDraftCustomConfig(credentials.customConfig)
+      setDraftFixedKeys(credentials.fixedKeys)
+      setDraftCustomConfigs(credentials.customConfigs)
     }
-  }, [isSettingsOpen, credentials.keys, credentials.customConfig])
+  }, [isSettingsOpen, credentials.fixedKeys, credentials.customConfigs])
 
-  const handleActiveModelChange = (activeModel: ModelProvider) => {
+  const handleActiveModelChange = (activeModel: string) => {
     const updated = { ...credentials, activeModel }
     setCredentials(updated)
     saveCredentials(updated)
   }
 
   const handleSaveCredentials = () => {
+    let activeModel = credentials.activeModel
+
+    const isValidActive =
+      BUILTIN_MODELS.includes(activeModel as BuiltInModel) ||
+      draftCustomConfigs.some((item) => item.id === activeModel)
+
+    if (!isValidActive) {
+      activeModel = 'deepseek'
+    }
+
     const updated = {
       ...credentials,
-      keys: draftKeys,
-      customConfig: draftCustomConfig,
+      activeModel,
+      fixedKeys: draftFixedKeys,
+      customConfigs: draftCustomConfigs,
     }
     setCredentials(updated)
     saveCredentials(updated)
     setIsSettingsOpen(false)
+  }
+
+  const openCreateCustomModal = () => {
+    setEditingCustomId(null)
+    setCustomForm(createEmptyCustomConfigForm())
+    setIsCustomModalOpen(true)
+  }
+
+  const openEditCustomModal = (config: CustomConfig) => {
+    setEditingCustomId(config.id)
+    setCustomForm({
+      alias: config.alias,
+      baseURL: config.baseURL,
+      modelName: config.modelName,
+      apiKey: config.apiKey,
+    })
+    setIsCustomModalOpen(true)
+  }
+
+  const handleSaveCustomConfig = () => {
+    if (!customForm.alias.trim()) {
+      alert('请填写模型别名')
+      return
+    }
+    if (!customForm.baseURL.trim()) {
+      alert('请填写 Base URL')
+      return
+    }
+    if (!customForm.modelName.trim()) {
+      alert('请填写 Model Name')
+      return
+    }
+    if (!customForm.apiKey.trim()) {
+      alert('请填写 API Key')
+      return
+    }
+
+    if (editingCustomId) {
+      setDraftCustomConfigs((prev) =>
+        prev.map((item) =>
+          item.id === editingCustomId
+            ? {
+                ...item,
+                alias: customForm.alias.trim(),
+                baseURL: customForm.baseURL.trim(),
+                modelName: customForm.modelName.trim(),
+                apiKey: customForm.apiKey.trim(),
+              }
+            : item,
+        ),
+      )
+    } else {
+      setDraftCustomConfigs((prev) => [
+        ...prev,
+        {
+          id: generateCustomConfigId(),
+          alias: customForm.alias.trim(),
+          baseURL: customForm.baseURL.trim(),
+          modelName: customForm.modelName.trim(),
+          apiKey: customForm.apiKey.trim(),
+        },
+      ])
+    }
+
+    setIsCustomModalOpen(false)
+  }
+
+  const handleDeleteCustomConfig = (id: string) => {
+    const target = draftCustomConfigs.find((item) => item.id === id)
+    if (!target) {
+      return
+    }
+
+    const confirmed = window.confirm(`确定删除自定义模型「${target.alias}」吗？`)
+    if (!confirmed) {
+      return
+    }
+
+    setDraftCustomConfigs((prev) => prev.filter((item) => item.id !== id))
+
+    if (credentials.activeModel === id) {
+      const updated = { ...credentials, activeModel: 'deepseek' as BuiltInModel }
+      setCredentials(updated)
+      saveCredentials(updated)
+    }
   }
 
   const handleStartReview = async () => {
@@ -91,8 +191,8 @@ function App() {
       return
     }
 
-    const apiKey = credentials.keys[credentials.activeModel]?.trim()
-    if (!apiKey) {
+    const resolved = resolveActiveModelCredentials(credentials)
+    if (!resolved) {
       alert('请先点击右上角设置图标，配置当前模型的 API Key')
       return
     }
@@ -106,9 +206,9 @@ function App() {
       }
       const result = await analyzePR(
         contextData,
-        apiKey,
-        credentials.activeModel,
-        credentials.customConfig,
+        resolved.apiKey,
+        resolved.selectedModel,
+        resolved.endpoint,
       )
       console.log('🏆 AI 审查结果出炉:', result)
     } catch (error) {
@@ -146,7 +246,6 @@ function App() {
         {/* Interactive Area */}
         <section className="mb-12 sm:mb-16">
           <div className="rounded-2xl border border-white/20 bg-white/60 p-2 shadow-sm backdrop-blur-md sm:p-3">
-            {/* PR Input + Action */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <div className="relative flex-1">
                 <Search
@@ -170,7 +269,6 @@ function App() {
               </button>
             </div>
 
-            {/* Review Context Configuration */}
             <div className="mt-3 rounded-xl border border-white/20 bg-white/40 p-4 backdrop-blur-sm sm:mt-4 sm:p-5">
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs font-medium tracking-wide text-slate-400 uppercase">
@@ -178,18 +276,22 @@ function App() {
                 </p>
                 <select
                   value={credentials.activeModel}
-                  onChange={(e) => handleActiveModelChange(e.target.value as ModelProvider)}
+                  onChange={(e) => handleActiveModelChange(e.target.value)}
                   className="rounded-lg border border-white/30 bg-white/50 px-3 py-1.5 text-sm text-slate-600 outline-none transition focus:border-slate-300/60 focus:ring-1 focus:ring-slate-900/5"
                 >
-                  {MODEL_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
+                  {BUILTIN_MODELS.map((model) => (
+                    <option key={model} value={model}>
+                      {BUILTIN_MODEL_LABELS[model]}
+                    </option>
+                  ))}
+                  {credentials.customConfigs.map((config) => (
+                    <option key={config.id} value={config.id}>
+                      {`⚙️ ${config.alias}`}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* Review Mode Toggle */}
               <fieldset className="mb-5 border-0 p-0">
                 <legend className="sr-only">审查模式</legend>
                 <div
@@ -244,7 +346,6 @@ function App() {
                 </div>
               </fieldset>
 
-              {/* Personalized Context Input */}
               <div className="relative">
                 <Target
                   className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
@@ -262,7 +363,6 @@ function App() {
           </div>
         </section>
 
-        {/* Placeholder Report Area */}
         <section className="flex flex-1 flex-col">
           <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-2xl border border-white/20 bg-white/60 p-10 shadow-sm backdrop-blur-md sm:min-h-[320px] sm:p-12">
             <p className="text-center text-base font-normal text-slate-400 sm:text-lg">
@@ -272,11 +372,10 @@ function App() {
         </section>
       </main>
 
-      {/* BYOK Settings Modal */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="relative mx-4 w-full max-w-[480px] rounded-2xl border border-white/20 bg-white/95 p-6 shadow-2xl backdrop-blur-xl transition-all duration-200">
-            <div className="mb-5 flex items-center justify-between">
+          <div className="relative mx-4 flex max-h-[90vh] w-full max-w-[480px] flex-col rounded-2xl border border-white/20 bg-white/95 p-6 shadow-2xl backdrop-blur-xl">
+            <div className="mb-5 flex shrink-0 items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-800">API 凭证与模型偏好</h2>
               <button
                 type="button"
@@ -288,14 +387,14 @@ function App() {
               </button>
             </div>
 
-            <div className="mb-6 flex items-start gap-2.5 rounded-lg bg-slate-100/80 px-3.5 py-3">
+            <div className="mb-6 flex shrink-0 items-start gap-2.5 rounded-lg bg-slate-100/80 px-3.5 py-3">
               <ShieldCheck size={14} className="mt-0.5 shrink-0 text-slate-500" strokeWidth={2} />
               <p className="text-xs leading-relaxed text-slate-500">
                 🔑 所有凭证仅加密保存在当前浏览器本地缓存中，绝不会上传至任何第三方服务器。
               </p>
             </div>
 
-            <div className="space-y-5">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
               {MODEL_KEY_FIELDS.map((field) => (
                 <div key={field.key}>
                   <div className="mb-2 flex items-center justify-between">
@@ -317,23 +416,110 @@ function App() {
                   <input
                     id={`key-${field.key}`}
                     type="password"
-                    value={draftKeys[field.key]}
+                    value={draftFixedKeys[field.key]}
                     onChange={(e) =>
-                      setDraftKeys((prev) => ({ ...prev, [field.key]: e.target.value }))
+                      setDraftFixedKeys((prev) => ({ ...prev, [field.key]: e.target.value }))
                     }
                     placeholder="sk-xxxxxxxxxxxx"
                     className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2.5 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
                   />
                 </div>
               ))}
+
+              <div className="border-t border-slate-200/80 pt-5">
+                <p className="mb-3 text-sm font-medium text-slate-700">管理自定义模型网关</p>
+
+                {draftCustomConfigs.length === 0 ? (
+                  <p className="mb-3 text-xs text-slate-400">暂无自定义模型，点击下方按钮添加</p>
+                ) : (
+                  <div className="mb-3 space-y-2">
+                    {draftCustomConfigs.map((config) => (
+                      <div
+                        key={config.id}
+                        className="flex items-center justify-between rounded-lg border border-slate-200/80 bg-slate-50 p-3"
+                      >
+                        <div className="min-w-0 flex-1 pr-3">
+                          <p className="truncate text-sm font-medium text-slate-700">
+                            {config.alias}
+                          </p>
+                          <p className="truncate text-xs text-slate-400">{config.modelName}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditCustomModal(config)}
+                            aria-label={`编辑 ${config.alias}`}
+                            className="rounded-md p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-600"
+                          >
+                            <Pencil size={14} strokeWidth={2} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCustomConfig(config.id)}
+                            aria-label={`删除 ${config.alias}`}
+                            className="rounded-md p-1.5 text-slate-400 transition hover:bg-white hover:text-red-500"
+                          >
+                            <Trash2 size={14} strokeWidth={2} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={openCreateCustomModal}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white/50 py-2.5 text-sm text-slate-600 transition hover:border-slate-400 hover:bg-white/80"
+                >
+                  <Plus size={16} strokeWidth={2} />
+                  添加新模型
+                </button>
+              </div>
             </div>
 
-            <div className="my-5 border-t border-slate-200/80" />
+            <button
+              type="button"
+              onClick={handleSaveCredentials}
+              className="mt-6 w-full shrink-0 rounded-xl bg-slate-900 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.99]"
+            >
+              保存并应用
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isCustomModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="relative mx-4 w-full max-w-[420px] rounded-2xl border border-white/20 bg-white/95 p-5 shadow-2xl backdrop-blur-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-800">
+                {editingCustomId ? '编辑自定义网关' : '添加自定义网关'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsCustomModalOpen(false)}
+                aria-label="关闭"
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X size={16} strokeWidth={2} />
+              </button>
+            </div>
 
             <div className="space-y-3">
-              <p className="text-sm font-medium text-slate-700">
-                自定义 API (兼容 OpenAI 格式)
-              </p>
+              <div>
+                <label htmlFor="custom-alias" className="mb-1.5 block text-xs text-slate-500">
+                  模型别名
+                </label>
+                <input
+                  id="custom-alias"
+                  type="text"
+                  value={customForm.alias}
+                  onChange={(e) => setCustomForm((prev) => ({ ...prev, alias: e.target.value }))}
+                  placeholder="公司高级 API"
+                  className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
+                />
+              </div>
               <div>
                 <label htmlFor="custom-base-url" className="mb-1.5 block text-xs text-slate-500">
                   Base URL
@@ -341,10 +527,8 @@ function App() {
                 <input
                   id="custom-base-url"
                   type="url"
-                  value={draftCustomConfig.baseURL}
-                  onChange={(e) =>
-                    setDraftCustomConfig((prev) => ({ ...prev, baseURL: e.target.value }))
-                  }
+                  value={customForm.baseURL}
+                  onChange={(e) => setCustomForm((prev) => ({ ...prev, baseURL: e.target.value }))}
                   placeholder="https://api.openai.com/v1/chat/completions"
                   className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
                 />
@@ -356,25 +540,23 @@ function App() {
                 <input
                   id="custom-model-name"
                   type="text"
-                  value={draftCustomConfig.modelName}
+                  value={customForm.modelName}
                   onChange={(e) =>
-                    setDraftCustomConfig((prev) => ({ ...prev, modelName: e.target.value }))
+                    setCustomForm((prev) => ({ ...prev, modelName: e.target.value }))
                   }
                   placeholder="例如: gpt-4, claude-3-haiku"
                   className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
                 />
               </div>
               <div>
-                <label htmlFor="key-custom" className="mb-1.5 block text-xs text-slate-500">
+                <label htmlFor="custom-api-key" className="mb-1.5 block text-xs text-slate-500">
                   API Key
                 </label>
                 <input
-                  id="key-custom"
+                  id="custom-api-key"
                   type="password"
-                  value={draftKeys.custom}
-                  onChange={(e) =>
-                    setDraftKeys((prev) => ({ ...prev, custom: e.target.value }))
-                  }
+                  value={customForm.apiKey}
+                  onChange={(e) => setCustomForm((prev) => ({ ...prev, apiKey: e.target.value }))}
                   placeholder="sk-xxxxxxxxxxxx"
                   className="w-full rounded-lg border border-slate-200/80 bg-white/60 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-300 outline-none transition focus:border-slate-300 focus:ring-1 focus:ring-slate-900/5"
                 />
@@ -383,10 +565,10 @@ function App() {
 
             <button
               type="button"
-              onClick={handleSaveCredentials}
-              className="mt-6 w-full rounded-xl bg-slate-900 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.99]"
+              onClick={handleSaveCustomConfig}
+              className="mt-5 w-full rounded-xl bg-slate-900 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
             >
-              保存并应用
+              保存
             </button>
           </div>
         </div>
