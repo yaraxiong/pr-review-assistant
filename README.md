@@ -17,3 +17,5 @@
 3. 启动开发服务器：`npm run dev`
 
 _(注：详细的架构设计、Prompt 策略与上下文注入方案将在后续 PR 中持续补充完善)_
+
+# pr-review-assistant
