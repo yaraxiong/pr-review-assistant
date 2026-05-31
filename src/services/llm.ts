@@ -46,11 +46,13 @@ const SCORING_AND_OUTPUT_PROMPT = `【角色定位：严苛的 Senior Maintainer
    - 连续惩罚：每遗漏一个潜在的边界条件 (Edge Case) 或未捕获异常 (-10分)。
    - 致命惩罚：发现可能导致系统崩溃、死循环或严重性能/安全隐患的致命缺陷 (直接扣除本项全部 20 分)。
 
-【严格的 JSON 输出契约】
-你的最终输出必须是一个纯净的 JSON，禁止任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。healthScore 必须是你基于上述奖惩机制，脑内真实加减运算后的最终整数结果（只输出结果，不输出计算过程）：
+【严格的 JSON 输出契约 (含强制思维链)】
+你必须严格按照以下顺序输出纯净的 JSON 对象，禁止任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。
+关键约束：你必须先在 \`markdownReport\` 中完整写出各维度的扣分推演过程，最后再将脑内计算出的总分输出到 \`healthScore\` 字段。绝不允许调换字段顺序！
+
 {
-  "healthScore": <你真实计算出的 0-100 整数>,
-  "markdownReport": "<审查文本>"
+  "markdownReport": "<在此处填写审查文本。你必须在文本内部明确写出：意图契合度、规范与优雅度、逻辑与健壮性这三个维度的具体推演和连续扣分过程>",
+  "healthScore": <在完成上述推演后，将最终计算出的 0-100 整数总分填入此处>
 }`
 
 const BUILTIN_MODEL_CONFIG: Record<
@@ -143,7 +145,7 @@ export const analyzePR = async (
           { role: 'system', content: systemPrompt },
           { role: 'user', content: JSON.stringify(contextData) },
         ],
-        temperature: 0.2,
+        temperature: 0.1,
       }),
     })
 
