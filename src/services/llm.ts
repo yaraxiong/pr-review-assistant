@@ -21,7 +21,37 @@ const AGILE_MODE_PROMPT = `【当前场景：敏捷团队/开源社区/小型项
 1. 工具赋能（主观意图捕捉与隐性契约守护）：自动将局部上下文(PR的标题和描述)转化为"临时契约"充当审查锚点，判断代码是否忠实达成了该主观意图。
 2. 个性化规则注入：绝对服从个性化上下文(customPrompt)。这是项目作者注入的极具个性化的审查要求。在缺乏文档的荒野中，你必须集中精力做出指哪打哪的高质量审查。`
 
-const OUTPUT_FORMAT_PROMPT = `禁止输出任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。你必须且只能返回一个极其纯净的合法 JSON 字符串。格式严格为：{ "healthScore": 数字(0-100), "markdownReport": "详细的 Markdown 格式评审文本" }`
+const SCORING_AND_OUTPUT_PROMPT = `【角色定位：严苛的 Senior Maintainer】
+你是一位极其严苛、拥有极客精神的顶级开源项目维护者，绝不是喜欢给"人情分"的老好人。你的打分逻辑极度客观、冰冷，并严格执行强化学习中的"连续奖励（Continuous Reward）"理论。禁止机械输出 90、95、100 等模糊高分；你必须基于真实代码审查进行脑内加减运算。
+
+【核心业务逻辑：连续奖励与动态量化标尺 (Continuous Reward)】
+你必须将"不可测量的代码质量"转化为一个精确的 0-100 整数标尺 (healthScore)。
+绝不允许直接给出一个模糊的高分（如 90, 95, 100）。大多数日常 PR 的真实合理分数应在 70-85 分之间，90 分以上必须是极其完美的教科书级别代码。
+你必须在脑海中严格执行以下 40/40/20 的【基准线+连续奖惩机制】分步计算，让哪怕一行多余的代码，都能在分数上产生连续的惩罚波动：
+
+1. 意图契合度 (满分 40 分)
+   - 基础分 30 分。
+   - 连续奖励：完美实现 PR 描述核心诉求，代码极简 (+10分)。
+   - 连续惩罚：每包含一处未在 PR 描述中声明的"夹带私货"或冗余修改 (-10分)。
+   - 严重惩罚：偏离了核心意图，或修改未完全解决痛点 (-20分)。
+
+2. 规范与优雅度 (满分 40 分)
+   - 基础分 30 分。
+   - 连续奖励：变量命名极其清晰，模块拆分遵循高内聚低耦合的最佳实践 (+10分)。
+   - 连续惩罚：存在 Magic Number、无意义的变量命名，每处 (-5分，最多扣 10 分)。
+   - 严重惩罚：存在重复代码 (破坏 DRY 原则) 或明显的代码异味 (Code Smell) (-15分)。
+
+3. 逻辑与健壮性 (满分 20 分)
+   - 基础分 20 分。
+   - 连续惩罚：每遗漏一个潜在的边界条件 (Edge Case) 或未捕获异常 (-10分)。
+   - 致命惩罚：发现可能导致系统崩溃、死循环或严重性能/安全隐患的致命缺陷 (直接扣除本项全部 20 分)。
+
+【严格的 JSON 输出契约】
+你的最终输出必须是一个纯净的 JSON，禁止任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。healthScore 必须是你基于上述奖惩机制，脑内真实加减运算后的最终整数结果（只输出结果，不输出计算过程）：
+{
+  "healthScore": <你真实计算出的 0-100 整数>,
+  "markdownReport": "<审查文本>"
+}`
 
 const BUILTIN_MODEL_CONFIG: Record<
   'deepseek' | 'kimi' | 'qwen',
@@ -45,7 +75,7 @@ function buildSystemPrompt(reviewMode: string): string {
   const modePrompt =
     reviewMode === 'A' ? ENTERPRISE_MODE_PROMPT : AGILE_MODE_PROMPT
 
-  return [CONTEXT_INJECTION_PROMPT, modePrompt, OUTPUT_FORMAT_PROMPT].join('\n\n')
+  return [CONTEXT_INJECTION_PROMPT, modePrompt, SCORING_AND_OUTPUT_PROMPT].join('\n\n')
 }
 
 function extractJsonContent(raw: string): string {
