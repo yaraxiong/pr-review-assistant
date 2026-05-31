@@ -10,6 +10,7 @@ export interface CustomConfig {
 
 type IssueCategory = 'intent' | 'style' | 'robustness'
 type IssueSeverity = 'bonus' | 'minor' | 'moderate' | 'critical'
+type NormalizedReviewMode = 'enterprise' | 'agile'
 
 interface ReviewIssue {
   category: IssueCategory
@@ -20,6 +21,11 @@ interface ReviewIssue {
 interface QualitativeReviewResponse {
   summary: string
   issues: ReviewIssue[]
+}
+
+interface GlobalContextPayload {
+  readme?: string
+  contributing?: string
 }
 
 const ISSUE_CATEGORIES: IssueCategory[] = ['intent', 'style', 'robustness']
@@ -53,6 +59,7 @@ const DEDUCTION_BY_SEVERITY: Record<Exclude<IssueSeverity, 'bonus'>, number> = {
 const BONUS_POINTS = 5
 const CATEGORY_DEDUCTION_CAP = 30
 const BASE_SCORE = 100
+const TRACK_WEIGHT_MULTIPLIER = 1.5
 
 const CONTEXT_INJECTION_PROMPT = `你是一个高级代码审查 AI。纯静态扫描工具误报率高的根源在于"缺乏上下文"。系统通过以下"三层上下文注入"机制解决这一痛点，你必须以此作为最高审查准则：
 - 局部上下文 (Local Context) - 锚定意图：这是 PR 的 Title 和 Body。让你明确代码变更的初始目的，验证代码修改是否符合 PR 描述。
@@ -66,36 +73,6 @@ const ENTERPRISE_MODE_PROMPT = `【当前场景：企业级重型团队（具备
 const AGILE_MODE_PROMPT = `【当前场景：敏捷团队/开源社区/小型项目（缺乏完整 SDD）】沟通成本高，审查标准高度依赖"原作者的主观要求"。你的核心任务是：
 1. 工具赋能（主观意图捕捉与隐性契约守护）：自动将局部上下文(PR的标题和描述)转化为"临时契约"充当审查锚点，判断代码是否忠实达成了该主观意图。
 2. 个性化规则注入：绝对服从个性化上下文(customPrompt)。这是项目作者注入的极具个性化的审查要求。在缺乏文档的荒野中，你必须集中精力做出指哪打哪的高质量审查。`
-
-const QUALITATIVE_OUTPUT_PROMPT = `【角色定位：严苛的 Senior Maintainer】
-你是一位极其严苛、拥有极客精神的顶级开源项目维护者。你的职责是进行客观、精准的定性代码审查，识别问题与亮点。你不需要、也不允许输出任何分数、评级或数值化结论。
-
-【审查维度说明】
-- category "intent"：意图契合度，代码是否忠实实现 PR 描述的核心诉求。
-- category "style"：规范与优雅度，命名、结构、DRY 原则与代码异味。
-- category "robustness"：逻辑与健壮性，边界条件、异常处理与潜在致命缺陷。
-
-【severity 分级说明】
-- "bonus"：值得肯定的亮点或最佳实践。
-- "minor"：轻微问题，不影响核心功能。
-- "moderate"：中等问题，建议修复。
-- "critical"：严重问题，可能导致崩溃、安全隐患或核心逻辑错误。
-
-【严格的 JSON 输出契约】
-你必须且只能返回一个极其纯净的合法 JSON 字符串。禁止任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。格式严格为：
-{
-  "summary": "<1-2句话的核心审查总结>",
-  "issues": [
-    {
-      "category": "intent" | "style" | "robustness",
-      "severity": "bonus" | "minor" | "moderate" | "critical",
-      "description": "<具体发现的问题或亮点描述>"
-    }
-  ]
-}
-
-【极其重要的输出约束】
-请输出 3-6 个最有价值的审查意见，宁缺毋滥。`
 
 const BUILTIN_MODEL_CONFIG: Record<
   'deepseek' | 'kimi' | 'qwen',
@@ -115,11 +92,98 @@ const BUILTIN_MODEL_CONFIG: Record<
   },
 }
 
-function buildSystemPrompt(reviewMode: string): string {
-  const modePrompt =
-    reviewMode === 'A' ? ENTERPRISE_MODE_PROMPT : AGILE_MODE_PROMPT
+function normalizeReviewMode(raw: string): NormalizedReviewMode {
+  if (raw === 'A' || raw === 'enterprise') {
+    return 'enterprise'
+  }
+  return 'agile'
+}
 
-  return [CONTEXT_INJECTION_PROMPT, modePrompt, QUALITATIVE_OUTPUT_PROMPT].join('\n\n')
+function buildQualitativeOutputPrompt(reviewMode: NormalizedReviewMode): string {
+  const priorityPrompt =
+    reviewMode === 'enterprise'
+      ? '【审查优先级（企业模式）】你必须按以下顺序分配审查注意力：1. robustness (排查深层隐患) -> 2. intent -> 3. style。'
+      : '【审查优先级（敏捷模式）】你必须按以下顺序分配审查注意力：1. intent (锚定 PR 描述) -> 2. style -> 3. robustness。'
+
+  return `【角色定位：严苛的 Senior Maintainer】
+你是一位极其严苛、拥有极客精神的顶级开源项目维护者。你的职责是进行客观、精准的定性代码审查，识别问题与亮点。你不需要、也不允许输出任何分数、评级或数值化结论。
+
+【审查维度说明】
+- category "intent"：意图契合度，代码是否忠实实现 PR 描述的核心诉求。
+- category "style"：规范与优雅度，命名、结构、DRY 原则与代码异味。
+- category "robustness"：逻辑与健壮性，边界条件、异常处理与潜在致命缺陷。
+
+【severity 分级说明】
+- "bonus"：值得肯定的亮点或最佳实践。
+- "minor"：轻微问题，不影响核心功能。
+- "moderate"：中等问题，建议修复。
+- "critical"：严重问题，可能导致崩溃、安全隐患或核心逻辑错误。
+
+${priorityPrompt}
+
+【严格的 JSON 输出契约】
+你必须且只能返回一个极其纯净的合法 JSON 字符串。禁止任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。格式严格为：
+{
+  "summary": "<1-2句话的核心审查总结>",
+  "issues": [
+    {
+      "category": "intent" | "style" | "robustness",
+      "severity": "bonus" | "minor" | "moderate" | "critical",
+      "description": "<具体发现的问题或亮点描述>"
+    }
+  ]
+}
+
+【极其重要的输出约束】
+请输出 3-6 个最有价值的审查意见，宁缺毋滥。`
+}
+
+function buildPersonalizedContextPrompt(personalizedContext: string): string {
+  return `\n\n【最高优先级指令 - 人类审阅者的自定义焦点】\n${personalizedContext}\n你必须将上述自定义焦点作为最高优先级审查准则，优先寻找相关问题。`
+}
+
+function buildSystemPrompt(
+  reviewMode: NormalizedReviewMode,
+  personalizedContext: string,
+): string {
+  const modePrompt =
+    reviewMode === 'enterprise' ? ENTERPRISE_MODE_PROMPT : AGILE_MODE_PROMPT
+
+  const parts = [
+    CONTEXT_INJECTION_PROMPT,
+    modePrompt,
+    buildQualitativeOutputPrompt(reviewMode),
+  ]
+
+  const trimmedContext = personalizedContext.trim()
+  if (trimmedContext) {
+    parts.push(buildPersonalizedContextPrompt(trimmedContext))
+  }
+
+  return parts.join('\n\n')
+}
+
+function buildUserContent(
+  contextData: Record<string, unknown>,
+  reviewMode: NormalizedReviewMode,
+): string {
+  if (reviewMode === 'enterprise') {
+    const globalContext = contextData.globalContext as GlobalContextPayload | undefined
+    const readme = globalContext?.readme ?? ''
+    const contributing = globalContext?.contributing ?? ''
+
+    const enterprisePayload = {
+      absolute_standard: readme,
+      meta: contextData.meta,
+      localContext: contextData.localContext,
+      globalContext: { contributing },
+      diff: contextData.diff,
+    }
+
+    return JSON.stringify(enterprisePayload)
+  }
+
+  return JSON.stringify(contextData)
 }
 
 function extractJsonContent(raw: string): string {
@@ -162,7 +226,28 @@ function parseQualitativeReview(content: string): QualitativeReviewResponse {
   }
 }
 
-function calculateHealthScore(issues: ReviewIssue[]): number {
+function getIssueDeduction(issue: ReviewIssue, reviewMode: NormalizedReviewMode): number {
+  if (issue.severity === 'bonus') {
+    return 0
+  }
+
+  let deduction = DEDUCTION_BY_SEVERITY[issue.severity]
+
+  if (reviewMode === 'enterprise' && issue.category === 'robustness') {
+    deduction *= TRACK_WEIGHT_MULTIPLIER
+  }
+
+  if (reviewMode === 'agile' && issue.category === 'intent') {
+    deduction *= TRACK_WEIGHT_MULTIPLIER
+  }
+
+  return deduction
+}
+
+function calculateHealthScore(
+  issues: ReviewIssue[],
+  reviewMode: NormalizedReviewMode,
+): number {
   const categoryDeductions: Record<IssueCategory, number> = {
     intent: 0,
     style: 0,
@@ -176,7 +261,7 @@ function calculateHealthScore(issues: ReviewIssue[]): number {
       continue
     }
 
-    categoryDeductions[issue.category] += DEDUCTION_BY_SEVERITY[issue.severity]
+    categoryDeductions[issue.category] += getIssueDeduction(issue, reviewMode)
   }
 
   const cappedDeduction = ISSUE_CATEGORIES.reduce(
@@ -248,8 +333,14 @@ export const analyzePR = async (
   try {
     const config = resolveModelConfig(selectedModel, customConfig)
 
-    const reviewMode = String(contextData.reviewMode ?? 'B')
-    const systemPrompt = buildSystemPrompt(reviewMode)
+    const reviewMode = normalizeReviewMode(String(contextData.reviewMode ?? 'B'))
+    const personalizedContext = String(contextData.customPrompt ?? '')
+
+    delete contextData.reviewMode
+    delete contextData.customPrompt
+
+    const systemPrompt = buildSystemPrompt(reviewMode, personalizedContext)
+    const userContent = buildUserContent(contextData, reviewMode)
 
     const response = await fetch(config.baseURL, {
       method: 'POST',
@@ -261,7 +352,7 @@ export const analyzePR = async (
         model: config.modelName,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: JSON.stringify(contextData) },
+          { role: 'user', content: userContent },
         ],
         temperature: 0.1,
       }),
@@ -282,7 +373,7 @@ export const analyzePR = async (
     }
 
     const qualitativeReview = parseQualitativeReview(content)
-    const healthScore = calculateHealthScore(qualitativeReview.issues)
+    const healthScore = calculateHealthScore(qualitativeReview.issues, reviewMode)
     const markdownReport = buildMarkdownReport(qualitativeReview)
 
     return { healthScore, markdownReport }
