@@ -8,6 +8,52 @@ export interface CustomConfig {
   modelName: string
 }
 
+type IssueCategory = 'intent' | 'style' | 'robustness'
+type IssueSeverity = 'bonus' | 'minor' | 'moderate' | 'critical'
+
+interface ReviewIssue {
+  category: IssueCategory
+  severity: IssueSeverity
+  description: string
+}
+
+interface QualitativeReviewResponse {
+  summary: string
+  issues: ReviewIssue[]
+}
+
+const ISSUE_CATEGORIES: IssueCategory[] = ['intent', 'style', 'robustness']
+
+const CATEGORY_LABELS: Record<IssueCategory, string> = {
+  intent: '意图契合度',
+  style: '规范与优雅度',
+  robustness: '逻辑与健壮性',
+}
+
+const SEVERITY_EMOJI: Record<IssueSeverity, string> = {
+  bonus: '✨',
+  minor: '📝',
+  moderate: '⚠️',
+  critical: '🚨',
+}
+
+const SEVERITY_LABELS: Record<IssueSeverity, string> = {
+  bonus: '亮点',
+  minor: '轻微',
+  moderate: '中等',
+  critical: '严重',
+}
+
+const DEDUCTION_BY_SEVERITY: Record<Exclude<IssueSeverity, 'bonus'>, number> = {
+  minor: 5,
+  moderate: 10,
+  critical: 20,
+}
+
+const BONUS_POINTS = 5
+const CATEGORY_DEDUCTION_CAP = 30
+const BASE_SCORE = 100
+
 const CONTEXT_INJECTION_PROMPT = `你是一个高级代码审查 AI。纯静态扫描工具误报率高的根源在于"缺乏上下文"。系统通过以下"三层上下文注入"机制解决这一痛点，你必须以此作为最高审查准则：
 - 局部上下文 (Local Context) - 锚定意图：这是 PR 的 Title 和 Body。让你明确代码变更的初始目的，验证代码修改是否符合 PR 描述。
 - 全局上下文 (Global Context) - 注入家规：这是目标仓库的 README.md 或 CONTRIBUTING.md。让你掌握该仓库的专属规范，大幅降低误报（False Positive）。
@@ -21,39 +67,35 @@ const AGILE_MODE_PROMPT = `【当前场景：敏捷团队/开源社区/小型项
 1. 工具赋能（主观意图捕捉与隐性契约守护）：自动将局部上下文(PR的标题和描述)转化为"临时契约"充当审查锚点，判断代码是否忠实达成了该主观意图。
 2. 个性化规则注入：绝对服从个性化上下文(customPrompt)。这是项目作者注入的极具个性化的审查要求。在缺乏文档的荒野中，你必须集中精力做出指哪打哪的高质量审查。`
 
-const SCORING_AND_OUTPUT_PROMPT = `【角色定位：严苛的 Senior Maintainer】
-你是一位极其严苛、拥有极客精神的顶级开源项目维护者，绝不是喜欢给"人情分"的老好人。你的打分逻辑极度客观、冰冷，并严格执行强化学习中的"连续奖励（Continuous Reward）"理论。禁止机械输出 90、95、100 等模糊高分；你必须基于真实代码审查进行脑内加减运算。
+const QUALITATIVE_OUTPUT_PROMPT = `【角色定位：严苛的 Senior Maintainer】
+你是一位极其严苛、拥有极客精神的顶级开源项目维护者。你的职责是进行客观、精准的定性代码审查，识别问题与亮点。你不需要、也不允许输出任何分数、评级或数值化结论。
 
-【核心业务逻辑：连续奖励与动态量化标尺 (Continuous Reward)】
-你必须将"不可测量的代码质量"转化为一个精确的 0-100 整数标尺 (healthScore)。
-绝不允许直接给出一个模糊的高分（如 90, 95, 100）。大多数日常 PR 的真实合理分数应在 70-85 分之间，90 分以上必须是极其完美的教科书级别代码。
-你必须在脑海中严格执行以下 40/40/20 的【基准线+连续奖惩机制】分步计算，让哪怕一行多余的代码，都能在分数上产生连续的惩罚波动：
+【审查维度说明】
+- category "intent"：意图契合度，代码是否忠实实现 PR 描述的核心诉求。
+- category "style"：规范与优雅度，命名、结构、DRY 原则与代码异味。
+- category "robustness"：逻辑与健壮性，边界条件、异常处理与潜在致命缺陷。
 
-1. 意图契合度 (满分 40 分)
-   - 基础分 30 分。
-   - 连续奖励：完美实现 PR 描述核心诉求，代码极简 (+10分)。
-   - 连续惩罚：每包含一处未在 PR 描述中声明的"夹带私货"或冗余修改 (-10分)。
-   - 严重惩罚：偏离了核心意图，或修改未完全解决痛点 (-20分)。
+【severity 分级说明】
+- "bonus"：值得肯定的亮点或最佳实践。
+- "minor"：轻微问题，不影响核心功能。
+- "moderate"：中等问题，建议修复。
+- "critical"：严重问题，可能导致崩溃、安全隐患或核心逻辑错误。
 
-2. 规范与优雅度 (满分 40 分)
-   - 基础分 30 分。
-   - 连续奖励：变量命名极其清晰，模块拆分遵循高内聚低耦合的最佳实践 (+10分)。
-   - 连续惩罚：存在 Magic Number、无意义的变量命名，每处 (-5分，最多扣 10 分)。
-   - 严重惩罚：存在重复代码 (破坏 DRY 原则) 或明显的代码异味 (Code Smell) (-15分)。
-
-3. 逻辑与健壮性 (满分 20 分)
-   - 基础分 20 分。
-   - 连续惩罚：每遗漏一个潜在的边界条件 (Edge Case) 或未捕获异常 (-10分)。
-   - 致命惩罚：发现可能导致系统崩溃、死循环或严重性能/安全隐患的致命缺陷 (直接扣除本项全部 20 分)。
-
-【严格的 JSON 输出契约 (含强制思维链)】
-你必须严格按照以下顺序输出纯净的 JSON 对象，禁止任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。
-关键约束：你必须先在 \`markdownReport\` 中完整写出各维度的扣分推演过程，最后再将脑内计算出的总分输出到 \`healthScore\` 字段。绝不允许调换字段顺序！
-
+【严格的 JSON 输出契约】
+你必须且只能返回一个极其纯净的合法 JSON 字符串。禁止任何 Markdown 代码块包裹（如 \`\`\`json），禁止输出任何多余的废话前缀。格式严格为：
 {
-  "markdownReport": "<在此处填写审查文本。你必须在文本内部明确写出：意图契合度、规范与优雅度、逻辑与健壮性这三个维度的具体推演和连续扣分过程>",
-  "healthScore": <在完成上述推演后，将最终计算出的 0-100 整数总分填入此处>
-}`
+  "summary": "<1-2句话的核心审查总结>",
+  "issues": [
+    {
+      "category": "intent" | "style" | "robustness",
+      "severity": "bonus" | "minor" | "moderate" | "critical",
+      "description": "<具体发现的问题或亮点描述>"
+    }
+  ]
+}
+
+【极其重要的输出约束】
+请输出 3-6 个最有价值的审查意见，宁缺毋滥。`
 
 const BUILTIN_MODEL_CONFIG: Record<
   'deepseek' | 'kimi' | 'qwen',
@@ -77,7 +119,7 @@ function buildSystemPrompt(reviewMode: string): string {
   const modePrompt =
     reviewMode === 'A' ? ENTERPRISE_MODE_PROMPT : AGILE_MODE_PROMPT
 
-  return [CONTEXT_INJECTION_PROMPT, modePrompt, SCORING_AND_OUTPUT_PROMPT].join('\n\n')
+  return [CONTEXT_INJECTION_PROMPT, modePrompt, QUALITATIVE_OUTPUT_PROMPT].join('\n\n')
 }
 
 function extractJsonContent(raw: string): string {
@@ -86,17 +128,93 @@ function extractJsonContent(raw: string): string {
   return fencedMatch ? fencedMatch[1].trim() : trimmed
 }
 
-function parseAnalysisResult(content: string): AnalysisResult {
-  const parsed = JSON.parse(extractJsonContent(content)) as AnalysisResult
+function isIssueCategory(value: unknown): value is IssueCategory {
+  return typeof value === 'string' && ISSUE_CATEGORIES.includes(value as IssueCategory)
+}
 
-  if (
-    typeof parsed.healthScore !== 'number' ||
-    typeof parsed.markdownReport !== 'string'
-  ) {
+function isIssueSeverity(value: unknown): value is IssueSeverity {
+  return (
+    value === 'bonus' ||
+    value === 'minor' ||
+    value === 'moderate' ||
+    value === 'critical'
+  )
+}
+
+function parseQualitativeReview(content: string): QualitativeReviewResponse {
+  const parsed = JSON.parse(extractJsonContent(content)) as QualitativeReviewResponse
+
+  if (typeof parsed.summary !== 'string' || !Array.isArray(parsed.issues)) {
     throw new Error('AI 返回的数据格式不符合预期')
   }
 
-  return parsed
+  const issues = parsed.issues.filter(
+    (issue): issue is ReviewIssue =>
+      isIssueCategory(issue.category) &&
+      isIssueSeverity(issue.severity) &&
+      typeof issue.description === 'string' &&
+      issue.description.trim().length > 0,
+  )
+
+  return {
+    summary: parsed.summary.trim(),
+    issues,
+  }
+}
+
+function calculateHealthScore(issues: ReviewIssue[]): number {
+  const categoryDeductions: Record<IssueCategory, number> = {
+    intent: 0,
+    style: 0,
+    robustness: 0,
+  }
+  let bonusTotal = 0
+
+  for (const issue of issues) {
+    if (issue.severity === 'bonus') {
+      bonusTotal += BONUS_POINTS
+      continue
+    }
+
+    categoryDeductions[issue.category] += DEDUCTION_BY_SEVERITY[issue.severity]
+  }
+
+  const cappedDeduction = ISSUE_CATEGORIES.reduce(
+    (total, category) =>
+      total + Math.min(categoryDeductions[category], CATEGORY_DEDUCTION_CAP),
+    0,
+  )
+
+  const rawScore = BASE_SCORE - cappedDeduction + bonusTotal
+  return Math.max(0, Math.min(100, rawScore))
+}
+
+function buildMarkdownReport(review: QualitativeReviewResponse): string {
+  const sections: string[] = [`## 审查摘要\n\n${review.summary}\n`]
+
+  if (review.issues.length === 0) {
+    sections.push('> 本次审查未发现明显问题，代码质量良好。')
+    return sections.join('\n').trim()
+  }
+
+  for (const category of ISSUE_CATEGORIES) {
+    const categoryIssues = review.issues.filter((issue) => issue.category === category)
+    if (categoryIssues.length === 0) {
+      continue
+    }
+
+    sections.push(`### ${CATEGORY_LABELS[category]}\n`)
+
+    for (const issue of categoryIssues) {
+      sections.push(
+        `- ${SEVERITY_EMOJI[issue.severity]} **${SEVERITY_LABELS[issue.severity]}** — ${issue.description}`,
+      )
+    }
+
+    sections.push('')
+  }
+
+  return sections.join('\n').trim()
 }
 
 function resolveModelConfig(
@@ -163,7 +281,11 @@ export const analyzePR = async (
       throw new Error('大模型 API 未返回有效内容')
     }
 
-    return parseAnalysisResult(content)
+    const qualitativeReview = parseQualitativeReview(content)
+    const healthScore = calculateHealthScore(qualitativeReview.issues)
+    const markdownReport = buildMarkdownReport(qualitativeReview)
+
+    return { healthScore, markdownReport }
   } catch (error) {
     if (error instanceof Error) {
       throw new Error(`PR 分析失败: ${error.message}`)
