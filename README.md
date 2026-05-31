@@ -2,13 +2,18 @@
 
 <div align="center">
 
-<p><em>本项目旨在提供一个以 AI 辅助分析为核心、具备深层上下文感知的代码评审工具。</em></p>
+<p>本项目旨在提供一个以 AI 辅助分析为核心、具备深层上下文感知的代码评审工具。</p>
 
-<p>💡 架构决策亮点：<strong>定性与定量剥离</strong> · <strong>双轨路由</strong> · <strong>三层上下文注入</strong> · <strong>零服务器成本（BYOK）</strong></p>
+<p>架构亮点：<strong>双轨路由</strong> · <strong>三层上下文注入</strong> ·  <strong>定性与定量剥离</strong> · <strong>零服务器成本（BYOK）</strong></p>
 
-<p>
-  <a href="你的部署网址" target="_blank">🌐 在线体验</a> •
-  <a href="你的演示视频地址" target="_blank">🎬 演示视频</a>
+<p align="center">
+  <a href="你的部署网址">
+    <img src="https://img.shields.io/badge/Website-项目网址-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="Project Website" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="你的演示视频地址">
+    <img src="https://img.shields.io/badge/Video-演示视频-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Demo Video" />
+  </a>
 </p>
 
 </div>
@@ -26,28 +31,24 @@
 
 ## 🧠 核心设计
 
-### 三层上下文注入（解决"不懂业务"的问题）
+### 三层上下文注入
 
 纯静态扫描工具误报率高的根源在于缺乏上下文。系统通过 GitHub API 并发抓取多维数据，为大模型构建全知视角：
 
-| 层级 | 数据来源 | 解决的问题 |
-|---|---|---|
-| **局部上下文** | PR Title / Body / Commit Messages | 代码变更是否偏离了初始目的？ |
-| **全局上下文** | README.md / CONTRIBUTING.md | 是否符合仓库的既有规范与约定？ |
-| **个性化上下文** | 用户自定义焦点输入 | 是否注意到 Reviewer 特别关心的领域？ |
+- **局部上下文 (锚定意图)：** 抓取 PR `Title` / `Body` / `Commit Messages`，核对代码变更是否偏离了初始目的。
+- **全局上下文 (注入契约)：** 读取 `README.md` / `CONTRIBUTING.md`，校验代码是否符合仓库的既有规范与约定。
+- **个性化上下文 (动态干预)：** 接收用户自定义焦点输入，确保大模型注意到 Reviewer 特别关心的领域。
 
 个性化上下文单独注入到 System Prompt 末尾作为最高优先级指令，避免在长文本 diff 中被稀释。
 
-### 双轨审查架构（解决"标准模糊"的问题）
+### 双轨审查架构
 
 不同团队对代码审查的诉求截然不同。系统在 **Prompt 约束、数据流结构、算分权重** 三个维度实现了物理级别的双轨路由：
 
 - **企业模式（防守型）**：以全局文档为绝对准绳，优先排查深层隐患与边界情况，Robustness 维度 1.5 倍加权
 - **敏捷模式（进攻型）**：以 PR 描述为临时契约，聚焦意图对齐与隐性契约守护，Intent 维度 1.5 倍加权
 
-### 定性与定量剥离的算分引擎（解决"分数抖动"的问题）
-
-大模型在算术运算上存在严重幻觉，同一个 PR 在不同推断中分数可能波动 20 分以上。系统将评分逻辑从 LLM 彻底剥离：
+### 定性与定量剥离的算分引擎
 
 ```
 LLM 职责：定性分析 → 输出 issues 数组（发现问题与亮点）
@@ -74,25 +75,18 @@ GitHub API (5 路并发) ──┐
 
 ### 技术栈
 
-| 技术层 | 选型 | 说明 |
-|---|---|---|
-| 前端框架 | React 18 + TypeScript + Vite | 轻量纯前端，无需服务端 |
-| 样式 | Tailwind CSS | 快速构建 SaaS 级 UI |
-| 报告渲染 | react-markdown + remark-gfm | 优雅呈现 Markdown 报告 |
-| 状态管理 | 组件内 useState（无外部依赖） | 单页应用，够用 |
-| API | GitHub REST API（无认证，限 60 req/h） | 支持匿名访问 PR 数据 |
-| LLM 网关 | BYOK（自备 Key） | 零服务器成本，隐私可控 |
+- **前端框架：** React 18 + TypeScript + Vite（轻量纯前端，无需服务端）
+- **UI 样式：** Tailwind CSS（快速构建现代 SaaS 级极简界面）
+- **报告渲染：** `react-markdown` + `remark-gfm`（优雅呈现 Markdown 审查报告）
+- **状态管理：** 组件内 `useState`（无外部依赖，单页应用轻量够用）
+- **API 通信：** GitHub REST API（支持匿名访问 PR 数据）与 BYOK 机制（零服务器成本，隐私可控）
 
 ### BYOK 多模型网关
 
 支持动态接入任意 OpenAI 兼容的 LLM API：
 
-| 模型 | 接入方式 |
-|---|---|
-| DeepSeek Coder | 内置，配置 Key 即用 |
-| Kimi 月之暗面 | 内置，配置 Key 即用 |
-| 通义千问 Qwen | 内置，配置 Key 即用 |
-| 自定义网关 | 手动填写 baseURL + modelName + Key |
+- **开箱即用：** 内置 DeepSeek Coder、Kimi 月之暗面、通义千问 Qwen，配置 Key 即用。
+- **动态扩展：** 支持手动填写 `baseURL` + `modelName` + `Key`，无缝接入自定义网关或私有化部署模型。
 
 ---
 
