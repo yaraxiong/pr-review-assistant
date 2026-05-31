@@ -5,15 +5,10 @@
 <p>本项目旨在提供一个以 AI 辅助分析为核心、具备深层上下文感知的代码评审工具。</p>
 
 <p>架构亮点：<strong>双轨路由</strong> · <strong>三层上下文注入</strong> ·  <strong>定性与定量剥离</strong> · <strong>零服务器成本（BYOK）</strong></p>
-
 <p align="center">
-  <a href="你的部署网址">
-    <img src="https://pr-review-assistant-ashy.vercel.app/" alt="Project Website" />
-  </a>
-  &nbsp;&nbsp;
-  <a href="你的演示视频地址">
-    <img src="https://www.bilibili.com/video/BV1wmVD6nEeh?vd_source=bb8ab85c5b91b9653afbde5a608de3fc" alt="Demo Video" />
-  </a>
+  🚀 <a href="https://pr-review-assistant-ashy.vercel.app/" target="_blank"><b>在线体验 (Live Demo)</b></a> 
+  &nbsp;&nbsp; | &nbsp;&nbsp;
+  🎬 <a href="https://www.bilibili.com/video/BV1wmVD6nEeh?vd_source=bb8ab85c5b91b9653afbde5a608de3fc" target="_blank"><b>演示视频 (Video Pitch)</b></a>
 </p>
 
 </div>
