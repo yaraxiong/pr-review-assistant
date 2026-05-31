@@ -8,11 +8,11 @@
 
 <p align="center">
   <a href="你的部署网址">
-    <img src="https://img.shields.io/badge/Website-项目网址-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="Project Website" />
+    <img src="https://pr-review-assistant-ashy.vercel.app/" alt="Project Website" />
   </a>
   &nbsp;&nbsp;
   <a href="你的演示视频地址">
-    <img src="https://img.shields.io/badge/Video-演示视频-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Demo Video" />
+    <img src="https://www.bilibili.com/video/BV1wmVD6nEeh?vd_source=bb8ab85c5b91b9653afbde5a608de3fc" alt="Demo Video" />
   </a>
 </p>
 
@@ -80,6 +80,7 @@ GitHub API (5 路并发) ──┐
 - **报告渲染：** `react-markdown` + `remark-gfm`（优雅呈现 Markdown 审查报告）
 - **状态管理：** 组件内 `useState`（无外部依赖，单页应用轻量够用）
 - **API 通信：** GitHub REST API（支持匿名访问 PR 数据）与 BYOK 机制（零服务器成本，隐私可控）
+- **部署架构：** Vercel Edge Network + 独立域名 Anycast 加速（规避国内 SNI 阻断，实现全球节点免备案秒开）
 
 ### BYOK 多模型网关
 
